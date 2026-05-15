@@ -230,17 +230,33 @@ export function step(w, evaderGenome, pursuerGenome) {
 export function runEpisode(evaderGenome, pursuerGenome, rng = Math.random) {
   const w = createWorld();
   reset(w, rng);
-  let shape = 0; // distance-based shaping, positive favours the evader
-  let prev = Math.hypot(w.evader.x - w.pursuer.x, w.evader.z - w.pursuer.z);
+  // Continuous proximity signal: average gap between the cubes over the
+  // whole round. Lower mean distance => blue gets a smoothly higher score
+  // for *pressing in*, with no penalty for a lunge that misses. The catch
+  // bonus then dwarfs everything, so finishing always beats shadowing.
+  let sumD = 0;
+  let steps = 0;
   const maxSteps = Math.ceil(CFG.ESCAPE_T / CFG.DT);
   for (let s = 0; s < maxSteps && !w.over; s++) {
     step(w, evaderGenome, pursuerGenome);
-    const d = Math.hypot(w.evader.x - w.pursuer.x, w.evader.z - w.pursuer.z);
-    shape += (d - prev);
-    prev = d;
+    sumD += Math.hypot(w.evader.x - w.pursuer.x, w.evader.z - w.pursuer.z);
+    steps++;
   }
   const escaped = w.outcome === "escaped";
-  const evaderFit = w.t + (escaped ? 120 : 0) + shape * 0.05;
-  const pursuerFit = escaped ? -20 : (CFG.ESCAPE_T - w.t) + 50 - shape * 0.05;
+  const meanD = steps ? sumD / steps : CFG.A;
+
+  // Blue: a catch is worth far more than any amount of shadowing, and an
+  // earlier catch is better. No catch -> graded purely on how close it
+  // managed to stay, so closing distance is *always* rewarded.
+  const pursuerFit = w.outcome === "caught"
+    ? 250 + (CFG.ESCAPE_T - w.t) * 2
+    : (escaped ? 40 : 80) - meanD * 4;
+
+  // Red: escaping is the jackpot; otherwise reward lasting long and having
+  // kept blue at arm's length.
+  const evaderFit = escaped
+    ? 300 + meanD * 2
+    : w.t * 2.5 + meanD * 2;
+
   return { evaderFit, pursuerFit, time: w.t, outcome: w.outcome };
 }
