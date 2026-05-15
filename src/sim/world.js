@@ -28,9 +28,43 @@ export function createWorld() {
     evader: { x: 0, z: 0, vx: 0, vz: 0 }, // red
     pursuer: { x: 0, z: 0, vx: 0, vz: 0 }, // blue
     blocks: Array.from({ length: CFG.N_BLOCKS }, () => ({ x: 0, z: 0 })),
+    // User sandbox objects. They persist across rounds (reset() leaves them
+    // alone) and the AIs sense + collide with them just like procedural ones.
+    userBlocks: [], // pushable squares the player drops in
+    statics: [],    // immovable wall squares the player drops in
     over: false,
     outcome: null, // 'caught' | 'escaped'
   };
+}
+
+const clampInside = (p) => {
+  const lim = CFG.A - CFG.BLOCK_H;
+  p.x = Math.max(-lim, Math.min(lim, p.x));
+  p.z = Math.max(-lim, Math.min(lim, p.z));
+  return p;
+};
+
+// ---- Sandbox mutators (used by the browser, never by training) ----
+export function addStatic(w, x, z) {
+  const o = clampInside({ x, z });
+  w.statics.push(o);
+  return o;
+}
+export function addPusher(w, x, z) {
+  const o = clampInside({ x, z });
+  w.userBlocks.push(o);
+  return o;
+}
+export function removeObject(w, ref) {
+  for (const list of [w.statics, w.userBlocks]) {
+    const i = list.indexOf(ref);
+    if (i >= 0) { list.splice(i, 1); return true; }
+  }
+  return false;
+}
+export function clearUserObjects(w) {
+  w.statics.length = 0;
+  w.userBlocks.length = 0;
 }
 
 export function reset(w, rng = Math.random) {
@@ -62,24 +96,25 @@ function dist2(a, b) {
   return dx * dx + dz * dz;
 }
 
-// Distance from a point along a unit ray to the nearest wall or block,
+// Distance from a point along a unit ray to the nearest wall or square,
 // clamped to RAY_RANGE and normalised to [0,1] (1 = nothing in range).
-function rayClearance(ox, oz, dx, dz, blocks) {
-  const A = CFG.A, R = CFG.RAY_RANGE;
+function rayClearance(ox, oz, dx, dz, w) {
+  const A = CFG.A, R = CFG.RAY_RANGE, h = CFG.BLOCK_H;
   let best = R;
   // Walls (the four arena boundaries).
   if (dx > 1e-6) best = Math.min(best, (A - ox) / dx);
   else if (dx < -1e-6) best = Math.min(best, (-A - ox) / dx);
   if (dz > 1e-6) best = Math.min(best, (A - oz) / dz);
   else if (dz < -1e-6) best = Math.min(best, (-A - oz) / dz);
-  // Blocks (axis-aligned squares) via the slab method.
-  const h = CFG.BLOCK_H;
-  for (const b of blocks) {
-    const tx1 = (b.x - h - ox) / dx, tx2 = (b.x + h - ox) / dx;
-    const tz1 = (b.z - h - oz) / dz, tz2 = (b.z + h - oz) / dz;
-    const tmin = Math.max(Math.min(tx1, tx2), Math.min(tz1, tz2));
-    const tmax = Math.min(Math.max(tx1, tx2), Math.max(tz1, tz2));
-    if (tmax >= Math.max(tmin, 0) && tmin < best) best = Math.max(tmin, 0);
+  // Every square (procedural, user pushable, user wall) via the slab method.
+  for (const list of [w.blocks, w.userBlocks, w.statics]) {
+    for (const b of list) {
+      const tx1 = (b.x - h - ox) / dx, tx2 = (b.x + h - ox) / dx;
+      const tz1 = (b.z - h - oz) / dz, tz2 = (b.z + h - oz) / dz;
+      const tmin = Math.max(Math.min(tx1, tx2), Math.min(tz1, tz2));
+      const tmax = Math.min(Math.max(tx1, tx2), Math.max(tz1, tz2));
+      if (tmax >= Math.max(tmin, 0) && tmin < best) best = Math.max(tmin, 0);
+    }
   }
   return Math.max(0, Math.min(1, best / R));
 }
@@ -97,7 +132,7 @@ export function sense(w, who) {
   ];
   for (let i = 0; i < CFG.N_RAYS; i++) {
     const a = (i / CFG.N_RAYS) * Math.PI * 2;
-    inp.push(rayClearance(me.x, me.z, Math.cos(a), Math.sin(a), w.blocks));
+    inp.push(rayClearance(me.x, me.z, Math.cos(a), Math.sin(a), w));
   }
   return inp;
 }
@@ -109,9 +144,9 @@ function moveAgent(ag, ox, oz, desX, desZ) {
   ag.vz += (desZ - ag.vz) * Math.min(1, CFG.ACCEL * dt);
   ag.x += ag.vx * dt;
   ag.z += ag.vz * dt;
-  // Push any blocks we walk into, then keep the agent out of them.
+  // Pushable squares (procedural + user) slide away; static walls don't.
   const ar = CFG.AGENT_R, h = CFG.BLOCK_H;
-  for (const b of ox.blocks) {
+  const resolve = (b, movable) => {
     const cx = Math.max(b.x - h, Math.min(ag.x, b.x + h));
     const cz = Math.max(b.z - h, Math.min(ag.z, b.z + h));
     let nx = ag.x - cx, nz = ag.z - cz;
@@ -119,12 +154,20 @@ function moveAgent(ag, ox, oz, desX, desZ) {
     if (dd < ar && dd > 1e-5) {
       const pen = ar - dd;
       nx /= dd; nz /= dd;
-      b.x -= nx * pen * 0.6; // block slides away (passageway forming)
-      b.z -= nz * pen * 0.6;
-      ag.x += nx * pen * 0.4; // agent stops short
-      ag.z += nz * pen * 0.4;
+      if (movable) {
+        b.x -= nx * pen * 0.6; // block slides away (passageway forming)
+        b.z -= nz * pen * 0.6;
+        ag.x += nx * pen * 0.4; // agent stops short
+        ag.z += nz * pen * 0.4;
+      } else {
+        ag.x += nx * pen; // wall is immovable: push the agent fully out
+        ag.z += nz * pen;
+      }
     }
-  }
+  };
+  for (const b of ox.blocks) resolve(b, true);
+  for (const b of ox.userBlocks) resolve(b, true);
+  for (const b of ox.statics) resolve(b, false);
   // Clamp agent inside the arena.
   const lim = CFG.A - ar;
   ag.x = Math.max(-lim, Math.min(lim, ag.x));
@@ -134,7 +177,9 @@ function moveAgent(ag, ox, oz, desX, desZ) {
 
 function settleBlocks(w) {
   const A = CFG.A, h = CFG.BLOCK_H, lim = A - h;
-  const bl = w.blocks;
+  // Pushables = procedural + user blocks (statics never move).
+  const bl = w.userBlocks.length ? w.blocks.concat(w.userBlocks) : w.blocks;
+  const st = w.statics;
   for (let pass = 0; pass < 2; pass++) {
     for (let i = 0; i < bl.length; i++) {
       for (let j = i + 1; j < bl.length; j++) {
@@ -149,6 +194,16 @@ function settleBlocks(w) {
             const s = (a.z < b.z ? -1 : 1) * oz * 0.5;
             a.z += s; b.z -= s;
           }
+        }
+      }
+      // Keep pushables out of immovable walls.
+      for (let k = 0; k < st.length; k++) {
+        const a = bl[i], s = st[k];
+        const ox = 2 * h - Math.abs(a.x - s.x);
+        const oz = 2 * h - Math.abs(a.z - s.z);
+        if (ox > 0 && oz > 0) {
+          if (ox < oz) a.x += (a.x < s.x ? -1 : 1) * ox;
+          else a.z += (a.z < s.z ? -1 : 1) * oz;
         }
       }
       bl[i].x = Math.max(-lim, Math.min(lim, bl[i].x));

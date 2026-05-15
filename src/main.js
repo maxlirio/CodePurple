@@ -5,7 +5,10 @@
 // used on the first visit.
 
 import * as THREE from "three";
-import { createWorld, reset, step, CFG } from "./sim/world.js";
+import {
+  createWorld, reset, step, CFG,
+  addStatic, addPusher, removeObject, clearUserObjects,
+} from "./sim/world.js";
 import {
   createEvolution, trainStep, getShowcase, genProgress,
   serialize, deserialize, POP,
@@ -135,6 +138,65 @@ let holdUntil = 0;      // brief pause after a round ends
 let learnX = 1;         // background learning throughput (1×–16×)
 let paused = false;
 let lastSavedGen = state.gen;
+let orbitT = 0;         // camera orbit time (frozen while interacting)
+let tool = "move";      // active sandbox tool
+let pointerDown = false;
+let dragObj = null;     // { kind, ref, limit }
+
+// ---- Sandbox objects (user-placed walls & blocks) ----
+redMesh.userData = { kind: "evader", ref: w.evader };
+blueMesh.userData = { kind: "pursuer", ref: w.pursuer };
+
+const wallMatU = new THREE.MeshStandardMaterial({
+  color: 0x00e6c8, emissive: 0x0a5a50, emissiveIntensity: 0.5, roughness: 0.5,
+});
+const pushMatU = new THREE.MeshStandardMaterial({
+  color: 0xffb13b, emissive: 0x6a3a00, emissiveIntensity: 0.45, roughness: 0.6,
+});
+const sandGeo = new THREE.BoxGeometry(CFG.BLOCK_H * 2, 2.2, CFG.BLOCK_H * 2);
+const staticMeshes = []; // parallel to w.statics
+const userMeshes = [];   // parallel to w.userBlocks
+
+function spawnMesh(mat, ref, kind, list) {
+  const m = new THREE.Mesh(sandGeo, mat);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  m.position.set(ref.x, 1.1, ref.z);
+  m.userData = { kind, ref };
+  scene.add(m);
+  list.push(m);
+  return m;
+}
+const placeWall = (x, z) =>
+  spawnMesh(wallMatU, addStatic(w, x, z), "static", staticMeshes);
+const placeBlock = (x, z) =>
+  spawnMesh(pushMatU, addPusher(w, x, z), "user", userMeshes);
+
+function destroyMesh(mesh) {
+  removeObject(w, mesh.userData.ref);
+  for (const list of [staticMeshes, userMeshes]) {
+    const i = list.indexOf(mesh);
+    if (i >= 0) list.splice(i, 1);
+  }
+  scene.remove(mesh);
+}
+
+const PLAY_KEY = "codepurple.play.v1";
+function saveLayout() {
+  try {
+    localStorage.setItem(PLAY_KEY, JSON.stringify({
+      statics: w.statics.map((o) => ({ x: o.x, z: o.z })),
+      blocks: w.userBlocks.map((o) => ({ x: o.x, z: o.z })),
+    }));
+  } catch (e) { /* ignore */ }
+}
+try {
+  const d = JSON.parse(localStorage.getItem(PLAY_KEY) || "null");
+  if (d) {
+    (d.statics || []).forEach((o) => placeWall(o.x, o.z));
+    (d.blocks || []).forEach((o) => placeBlock(o.x, o.z));
+  }
+} catch (e) { /* ignore */ }
 
 const $ = (id) => document.getElementById(id);
 $("src").textContent = src;
@@ -169,8 +231,9 @@ function animate(now) {
       }
     }
 
-    // Foreground exhibition match advances at true real time.
-    if (now >= holdUntil) {
+    // Foreground exhibition match advances at true real time, but freezes
+    // while you are interacting so the scene stays stable to edit.
+    if (now >= holdUntil && !pointerDown) {
       if (w.over) {
         startRound();
       } else {
@@ -200,9 +263,18 @@ function animate(now) {
     blockMeshes[i].position.x = w.blocks[i].x;
     blockMeshes[i].position.z = w.blocks[i].z;
   }
+  for (let i = 0; i < userMeshes.length; i++) {
+    userMeshes[i].position.x = w.userBlocks[i].x;
+    userMeshes[i].position.z = w.userBlocks[i].z;
+  }
+  for (let i = 0; i < staticMeshes.length; i++) {
+    staticMeshes[i].position.x = w.statics[i].x;
+    staticMeshes[i].position.z = w.statics[i].z;
+  }
 
-  // Slow cinematic orbit.
-  const a = now * 0.00007;
+  // Slow cinematic orbit, paused while you interact with the scene.
+  if (!pointerDown && !paused) orbitT += dtReal;
+  const a = orbitT * 0.07;
   camera.position.set(Math.sin(a) * 40, 30, Math.cos(a) * 40);
   camera.lookAt(0, 0, 0);
 
@@ -236,5 +308,103 @@ $("reset").addEventListener("click", () => {
   localStorage.removeItem(LS_KEY);
   location.reload();
 });
+// ---- Sandbox tools & drag interaction ----
+const cv = renderer.domElement;
+function setCursor() {
+  cv.style.cursor =
+    tool === "erase" ? "not-allowed" : tool === "move" ? "grab" : "crosshair";
+}
+document.querySelectorAll("#tools button[data-tool]").forEach((b) => {
+  b.addEventListener("click", () => {
+    tool = b.dataset.tool;
+    document.querySelectorAll("#tools button[data-tool]")
+      .forEach((x) => x.classList.toggle("on", x === b));
+    setCursor();
+  });
+});
+$("clearObj").addEventListener("click", () => {
+  [...staticMeshes, ...userMeshes].forEach((m) => scene.remove(m));
+  staticMeshes.length = 0;
+  userMeshes.length = 0;
+  clearUserObjects(w);
+  saveLayout();
+});
+
+const ray = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const hitPt = new THREE.Vector3();
+
+function groundAt(ev) {
+  const r = cv.getBoundingClientRect();
+  ndc.x = ((ev.clientX - r.left) / r.width) * 2 - 1;
+  ndc.y = -((ev.clientY - r.top) / r.height) * 2 + 1;
+  ray.setFromCamera(ndc, camera);
+  return ray.ray.intersectPlane(groundPlane, hitPt) ? hitPt : null;
+}
+function pickObject() {
+  const hits = ray.intersectObjects(
+    [redMesh, blueMesh, ...staticMeshes, ...userMeshes], false
+  );
+  return hits.length ? hits[0].object : null;
+}
+const clampTo = (p, lim) => {
+  p.x = Math.max(-lim, Math.min(lim, p.x));
+  p.z = Math.max(-lim, Math.min(lim, p.z));
+};
+
+cv.addEventListener("pointerdown", (ev) => {
+  const g = groundAt(ev);
+  if (!g) return;
+  pointerDown = true;
+  try { cv.setPointerCapture(ev.pointerId); } catch (e) { /* ok */ }
+  const obj = pickObject();
+
+  if (tool === "erase") {
+    if (obj && (obj.userData.kind === "static" || obj.userData.kind === "user")) {
+      destroyMesh(obj);
+      saveLayout();
+    }
+    return;
+  }
+  if (tool === "wall" || tool === "push") {
+    const m = tool === "wall" ? placeWall(g.x, g.z) : placeBlock(g.x, g.z);
+    dragObj = { kind: m.userData.kind, ref: m.userData.ref,
+                lim: CFG.A - CFG.BLOCK_H };
+    return;
+  }
+  if (obj) { // move tool: grab whatever is under the cursor
+    const k = obj.userData.kind;
+    dragObj = {
+      kind: k, ref: obj.userData.ref,
+      lim: (k === "evader" || k === "pursuer")
+        ? CFG.A - CFG.AGENT_R : CFG.A - CFG.BLOCK_H,
+    };
+  }
+});
+cv.addEventListener("pointermove", (ev) => {
+  if (!pointerDown || !dragObj) return;
+  const g = groundAt(ev);
+  if (!g) return;
+  const ref = dragObj.ref;
+  ref.x = g.x; ref.z = g.z;
+  clampTo(ref, dragObj.lim);
+  if (dragObj.kind === "evader" || dragObj.kind === "pursuer") {
+    ref.vx = ref.vz = 0; // drop it cleanly; the brain resumes control
+  }
+});
+function endDrag(ev) {
+  if (!pointerDown) return;
+  pointerDown = false;
+  if (dragObj && (dragObj.kind === "static" || dragObj.kind === "user")) {
+    saveLayout();
+  }
+  dragObj = null;
+  try { cv.releasePointerCapture(ev.pointerId); } catch (e) { /* ok */ }
+}
+cv.addEventListener("pointerup", endDrag);
+cv.addEventListener("pointercancel", endDrag);
+setCursor();
+
 addEventListener("beforeunload", save);
 setInterval(save, 20000); // periodic safety save

@@ -10,6 +10,20 @@ walls into the arena. When blue touches red, the round restarts. If red
 survives **2 minutes**, red wins and the round restarts. The learning
 **never stops** — you just open the page and watch them get better.
 
+### Play with them (sandbox)
+
+It's not just a spectator view. Use the **sandbox** toolbar (top-right):
+
+- 🧱 **wall** — drop immovable walls to build mazes and dead-ends.
+- 📦 **block** — drop extra pushable blocks.
+- ✋ **drag** — grab and drag *anything*, including the red and blue cubes
+  themselves, to mess with the chase in real time.
+- ✕ **erase** / 🗑 **clear** — remove objects you've placed.
+
+The AIs *sense and adapt to* whatever you build — their rangefinder
+sensors see your walls and blocks. Your layout is saved in the browser
+and persists across visits.
+
 ▶ **Live:** https://maxlirio.github.io/CodePurple/
 
 ## How it works

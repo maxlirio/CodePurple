@@ -32,14 +32,15 @@
     padding: 18px 30px; display: none; pointer-events: none;
   }
   #ctrl { bottom: 16px; left: 16px; display: flex; gap: 8px; align-items: center; }
-  #ctrl button {
+  #tools { top: 16px; right: 16px; display: flex; gap: 8px; align-items: center; }
+  #ctrl button, #tools button {
     font: inherit; font-size: 12px; color: #e9def7; cursor: pointer;
     background: rgba(120,80,200,0.22); border: 1px solid rgba(168,120,255,0.35);
     border-radius: 8px; padding: 7px 11px;
   }
-  #ctrl button:hover { background: rgba(150,100,240,0.4); }
-  #ctrl button.on { background: #7a4adf; border-color: #b48cff; }
-  #ctrl .sep { width: 1px; height: 22px; background: rgba(168,120,255,0.3); }
+  #ctrl button:hover, #tools button:hover { background: rgba(150,100,240,0.4); }
+  #ctrl button.on, #tools button.on { background: #7a4adf; border-color: #b48cff; }
+  #ctrl .sep, #tools .sep { width: 1px; height: 22px; background: rgba(168,120,255,0.3); }
   #help { bottom: 16px; right: 16px; max-width: 250px; font-size: 12px;
     color: #b9a7d6; line-height: 1.6; }
   a { color: #a878ff; }
@@ -61,7 +62,7 @@
 <div id="banner" class="panel"></div>
 
 <div id="ctrl" class="panel">
-  <span class="k" style="font-size:12px;color:#a78fce">speed</span>
+  <span class="k" style="font-size:12px;color:#a78fce">learn</span>
   <button data-spd="1" class="on">1×</button>
   <button data-spd="2">2×</button>
   <button data-spd="4">4×</button>
@@ -72,12 +73,26 @@
   <button id="reset">↺ reset learning</button>
 </div>
 
+<div id="tools" class="panel">
+  <span class="k" style="font-size:12px;color:#a78fce">sandbox</span>
+  <button data-tool="move" class="on">✋ drag</button>
+  <button data-tool="wall">🧱 wall</button>
+  <button data-tool="push">📦 block</button>
+  <button data-tool="erase">✕ erase</button>
+  <span class="sep"></span>
+  <button id="clearObj">🗑 clear</button>
+</div>
+
 <div id="help" class="panel">
   <strong style="color:#e9def7">What am I looking at?</strong><br />
   Two neural-net cubes. <span class="red">Red</span> evolves to escape;
-  <span class="blue">blue</span> evolves to catch it. They shove the grey
-  blocks into passageways as they go. Caught → restart. Red survives 2 min →
-  red wins, restart. Learning never stops and is saved in your browser.
+  <span class="blue">blue</span> evolves to catch it. Caught → restart.
+  Red survives 2 min → red wins. Learning never stops, saved in your browser.
+  <br /><br />
+  <strong style="color:#e9def7">Play with them:</strong> use the sandbox
+  tools to drop <em>walls</em> and <em>blocks</em>, then
+  <strong>drag anything</strong> — including the cubes themselves — to mess
+  with the chase. The AIs sense and adapt to whatever you build.
 </div>
 
 <script type="importmap">
