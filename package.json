@@ -1,0 +1,12 @@
+{
+  "name": "codepurple",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Two co-evolving neural-net cubes: red runs, blue chases. Watch them learn.",
+  "scripts": {
+    "seed": "node scripts/train-seed.mjs",
+    "serve": "npx --yes serve -l 5173 ."
+  },
+  "license": "MIT"
+}

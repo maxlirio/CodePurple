@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CodePurple — red runs, blue learns to catch it</title>
+<meta name="description" content="Two co-evolving neural-network cubes in a 3D arena. Red tries to escape, blue learns to catch it. They never stop learning — just watch." />
+<style>
+  :root { color-scheme: dark; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden;
+    background: #0a0512; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+  .panel {
+    position: fixed; backdrop-filter: blur(8px);
+    background: rgba(20, 8, 36, 0.62);
+    border: 1px solid rgba(168, 120, 255, 0.28);
+    border-radius: 12px; color: #e9def7; padding: 14px 16px;
+    font-size: 13px; line-height: 1.7; user-select: none;
+  }
+  #hud { top: 16px; left: 16px; min-width: 220px; }
+  #hud h1 { font-size: 15px; letter-spacing: 2px; margin-bottom: 8px;
+    background: linear-gradient(90deg,#ff5a7a,#a878ff,#5ab4ff);
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  #hud .row { display: flex; justify-content: space-between; gap: 18px; }
+  #hud .k { color: #a78fce; }
+  .red { color: #ff5a7a; } .blue { color: #5ab4ff; }
+  #banner {
+    top: 50%; left: 50%; transform: translate(-50%,-50%);
+    font-size: 26px; letter-spacing: 3px; text-align: center;
+    padding: 18px 30px; display: none; pointer-events: none;
+  }
+  #ctrl { bottom: 16px; left: 16px; display: flex; gap: 8px; align-items: center; }
+  #ctrl button {
+    font: inherit; font-size: 12px; color: #e9def7; cursor: pointer;
+    background: rgba(120,80,200,0.22); border: 1px solid rgba(168,120,255,0.35);
+    border-radius: 8px; padding: 7px 11px;
+  }
+  #ctrl button:hover { background: rgba(150,100,240,0.4); }
+  #ctrl button.on { background: #7a4adf; border-color: #b48cff; }
+  #ctrl .sep { width: 1px; height: 22px; background: rgba(168,120,255,0.3); }
+  #help { bottom: 16px; right: 16px; max-width: 250px; font-size: 12px;
+    color: #b9a7d6; line-height: 1.6; }
+  a { color: #a878ff; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="hud" class="panel">
+  <h1>CODEPURPLE</h1>
+  <div class="row"><span class="k">generation</span><span id="gen">—</span></div>
+  <div class="row"><span class="k">individual</span><span id="ind">—</span></div>
+  <div class="row"><span class="k red">red survived</span><span id="surv">—</span></div>
+  <div class="row"><span class="k red">red best</span><span id="bestE">—</span></div>
+  <div class="row"><span class="k blue">blue best</span><span id="bestP">—</span></div>
+  <div class="row"><span class="k">brain source</span><span id="src">—</span></div>
+</div>
+
+<div id="banner" class="panel"></div>
+
+<div id="ctrl" class="panel">
+  <span class="k" style="font-size:12px;color:#a78fce">speed</span>
+  <button data-spd="1" class="on">1×</button>
+  <button data-spd="2">2×</button>
+  <button data-spd="4">4×</button>
+  <button data-spd="8">8×</button>
+  <button data-spd="16">16×</button>
+  <span class="sep"></span>
+  <button id="pause">⏸ pause</button>
+  <button id="reset">↺ reset learning</button>
+</div>
+
+<div id="help" class="panel">
+  <strong style="color:#e9def7">What am I looking at?</strong><br />
+  Two neural-net cubes. <span class="red">Red</span> evolves to escape;
+  <span class="blue">blue</span> evolves to catch it. They shove the grey
+  blocks into passageways as they go. Caught → restart. Red survives 2 min →
+  red wins, restart. Learning never stops and is saved in your browser.
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
