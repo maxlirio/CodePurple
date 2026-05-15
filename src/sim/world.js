@@ -217,6 +217,9 @@ export function step(w, evaderGenome, pursuerGenome) {
   if (w.over) return;
   const oe = forward(evaderGenome, sense(w, "evader"), ARCH);
   const op = forward(pursuerGenome, sense(w, "pursuer"), ARCH);
+  // Expose the raw control outputs so fitness can penalise jerky steering.
+  w.evAct = [oe[0], oe[1]];
+  w.puAct = [op[0], op[1]];
   moveAgent(w.evader, w, w, oe[0] * CFG.SPEED_E, oe[1] * CFG.SPEED_E);
   moveAgent(w.pursuer, w, w, op[0] * CFG.SPEED_P, op[1] * CFG.SPEED_P);
   settleBlocks(w);
@@ -236,27 +239,41 @@ export function runEpisode(evaderGenome, pursuerGenome, rng = Math.random) {
   // bonus then dwarfs everything, so finishing always beats shadowing.
   let sumD = 0;
   let steps = 0;
+  // Accumulate "jerk": how much each cube's intended steering changes from
+  // one step to the next. A smooth policy keeps this tiny; a twitchy one
+  // racks it up. Penalising it makes smoothness genuinely *learned*.
+  let jerkE = 0, jerkP = 0;
+  let prevE = null, prevP = null;
   const maxSteps = Math.ceil(CFG.ESCAPE_T / CFG.DT);
   for (let s = 0; s < maxSteps && !w.over; s++) {
     step(w, evaderGenome, pursuerGenome);
     sumD += Math.hypot(w.evader.x - w.pursuer.x, w.evader.z - w.pursuer.z);
+    if (prevE) {
+      jerkE += Math.hypot(w.evAct[0] - prevE[0], w.evAct[1] - prevE[1]);
+      jerkP += Math.hypot(w.puAct[0] - prevP[0], w.puAct[1] - prevP[1]);
+    }
+    prevE = w.evAct; prevP = w.puAct;
     steps++;
   }
   const escaped = w.outcome === "escaped";
   const meanD = steps ? sumD / steps : CFG.A;
+  // Mean per-step steering change, scaled into a modest score penalty.
+  const SMOOTH = 35;
+  const penE = steps > 1 ? (jerkE / (steps - 1)) * SMOOTH : 0;
+  const penP = steps > 1 ? (jerkP / (steps - 1)) * SMOOTH : 0;
 
   // Blue: a catch is worth far more than any amount of shadowing, and an
   // earlier catch is better. No catch -> graded purely on how close it
   // managed to stay, so closing distance is *always* rewarded.
-  const pursuerFit = w.outcome === "caught"
+  const pursuerFit = (w.outcome === "caught"
     ? 250 + (CFG.ESCAPE_T - w.t) * 2
-    : (escaped ? 40 : 80) - meanD * 4;
+    : (escaped ? 40 : 80) - meanD * 4) - penP;
 
   // Red: escaping is the jackpot; otherwise reward lasting long and having
   // kept blue at arm's length.
-  const evaderFit = escaped
+  const evaderFit = (escaped
     ? 300 + meanD * 2
-    : w.t * 2.5 + meanD * 2;
+    : w.t * 2.5 + meanD * 2) - penE;
 
   return { evaderFit, pursuerFit, time: w.t, outcome: w.outcome };
 }

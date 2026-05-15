@@ -14,10 +14,9 @@ import {
   serialize, deserialize, POP,
 } from "./sim/evolve.js";
 
-// Bumped to v3: the reward was retuned (blue now presses the catch instead
-// of shadowing), so old saved brains are intentionally superseded by the
-// new, stronger seed.
-const LS_KEY = "codepurple.v3";
+// Bumped to v4: a jerk penalty was added so smoothness is genuinely
+// learned; old saved brains are intentionally superseded by the new seed.
+const LS_KEY = "codepurple.v4";
 
 // ---- Load brains: saved progress > committed seed > random ----
 async function loadState() {
