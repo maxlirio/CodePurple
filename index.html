@@ -50,12 +50,12 @@
 <div id="app"></div>
 
 <div id="hud" class="panel">
-  <h1>CODEPURPLE</h1>
-  <div class="row"><span class="k">generation</span><span id="gen">—</span></div>
-  <div class="row"><span class="k">individual</span><span id="ind">—</span></div>
+  <h1>CODEPURPLE <span style="font-size:10px;color:#7a4adf">· DQN</span></h1>
+  <div class="row"><span class="k">episodes</span><span id="gen">—</span></div>
+  <div class="row"><span class="k">exploration ε</span><span id="ind">—</span></div>
   <div class="row"><span class="k red">red survived</span><span id="surv">—</span></div>
-  <div class="row"><span class="k red">red best</span><span id="bestE">—</span></div>
-  <div class="row"><span class="k blue">blue best</span><span id="bestP">—</span></div>
+  <div class="row"><span class="k blue">blue catch rate</span><span id="bestP">—</span></div>
+  <div class="row"><span class="k blue">avg catch time</span><span id="bestE">—</span></div>
   <div class="row"><span class="k">brain source</span><span id="src">—</span></div>
 </div>
 
@@ -85,8 +85,9 @@
 
 <div id="help" class="panel">
   <strong style="color:#e9def7">What am I looking at?</strong><br />
-  Two neural-net cubes. <span class="red">Red</span> evolves to escape;
-  <span class="blue">blue</span> evolves to catch it. Caught → restart.
+  Two <strong>Deep Q-Network</strong> cubes learning by reinforcement.
+  <span class="red">Red</span> learns to escape;
+  <span class="blue">blue</span> learns to catch it. Caught → restart.
   Red survives 2 min → red wins. Learning never stops, saved in your browser.
   <br /><br />
   <strong style="color:#e9def7">Play with them:</strong> use the sandbox

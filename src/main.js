@@ -1,47 +1,55 @@
-// Browser entry point: renders the live arena with Three.js. You watch the
-// reigning champion red vs champion blue duel at real time, while many
-// generations of co-evolution run in the background every second. Learning
-// never stops and is persisted to localStorage; a committed seed brain is
-// used on the first visit.
+// Browser entry point (DQN build): renders the live arena with Three.js.
+// You watch the two Deep Q-Network cubes play greedily at real time, while
+// they keep learning by reinforcement (epsilon-greedy episodes) in the
+// background. Learning never stops and is persisted to localStorage; a
+// committed DQN seed is used on the first visit.
 
 import * as THREE from "three";
 import {
-  createWorld, reset, step, CFG,
+  createWorld, reset, sense, applyStep, CFG,
   addStatic, addPusher, removeObject, clearUserObjects,
 } from "./sim/world.js";
 import {
-  createEvolution, trainStep, getShowcase, genProgress,
-  serialize, deserialize, POP,
-} from "./sim/evolve.js";
+  createAgent, act, serializeAgent, deserializeAgent,
+} from "./rl/dqn.js";
+import { actionVel, trainEpisode } from "./rl/env.js";
 
-// Bumped to v4: a jerk penalty was added so smoothness is genuinely
-// learned; old saved brains are intentionally superseded by the new seed.
-const LS_KEY = "codepurple.v4";
+const LS_KEY = "codepurple.rl.v1";
 
-// ---- Load brains: saved progress > committed seed > random ----
-async function loadState() {
+// ---- Load brains: saved progress > committed seed > fresh ----
+async function loadAgents() {
   try {
     const saved = localStorage.getItem(LS_KEY);
     if (saved) {
-      const s = deserialize(JSON.parse(saved));
-      if (s) return { state: s, src: "your saved training" };
+      const d = JSON.parse(saved);
+      const e = deserializeAgent(d.evader), p = deserializeAgent(d.pursuer);
+      if (e && p) return { agE: e, agP: p, ep: d.ep || 0,
+                           src: "your saved training" };
     }
   } catch (e) { /* ignore corrupt storage */ }
   try {
-    const r = await fetch("./src/seed.json", { cache: "no-cache" });
+    const r = await fetch("./src/rl-seed.json", { cache: "no-cache" });
     if (r.ok) {
-      const s = deserialize(await r.json());
-      if (s) return { state: s, src: "seed brain" };
+      const d = await r.json();
+      const e = deserializeAgent(d.evader), p = deserializeAgent(d.pursuer);
+      if (e && p) return { agE: e, agP: p, ep: 0, src: "seed brain" };
     }
   } catch (e) { /* no seed committed yet */ }
-  return { state: createEvolution(), src: "fresh (random)" };
+  return { agE: createAgent(), agP: createAgent(), ep: 0,
+           src: "fresh (random)" };
 }
 
-const { state, src } = await loadState();
+const { agE, agP, ep: ep0, src } = await loadAgents();
+let episodes = ep0;
 
 function save() {
-  try { localStorage.setItem(LS_KEY, JSON.stringify(serialize(state))); }
-  catch (e) { /* storage full / blocked */ }
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify({
+      evader: serializeAgent(agE),
+      pursuer: serializeAgent(agP),
+      ep: episodes,
+    }));
+  } catch (e) { /* storage full / blocked */ }
 }
 
 // ---- Scene ----
@@ -132,14 +140,17 @@ const blockMeshes = Array.from({ length: CFG.N_BLOCKS }, () => {
 
 // ---- The exhibition match (champion vs champion, real time) ----
 const w = createWorld();
-let show = getShowcase(state);
 reset(w);
+let sE = Float64Array.from(sense(w, "evader"));
+let sP = Float64Array.from(sense(w, "pursuer"));
 let acc = 0;            // real-time physics accumulator
 let last = performance.now();
 let holdUntil = 0;      // brief pause after a round ends
 let learnX = 1;         // background learning throughput (1×–16×)
 let paused = false;
-let lastSavedGen = state.gen;
+let savedAtEp = episodes;
+const EXPLORE = 0.1;    // residual exploration while it keeps learning
+let catches = 0, rounds = 0, sumCatchT = 0; // rolling exhibition stats
 let orbitT = 0;         // camera orbit time (frozen while interacting)
 let tool = "move";      // active sandbox tool
 let pointerDown = false;
@@ -211,8 +222,9 @@ function showBanner(text, color) {
 }
 
 function startRound() {
-  show = getShowcase(state); // pick up any newly crowned champions
   reset(w);
+  sE = Float64Array.from(sense(w, "evader"));
+  sP = Float64Array.from(sense(w, "pursuer"));
   banner.style.display = "none";
 }
 
@@ -224,17 +236,15 @@ function animate(now) {
   last = now;
 
   if (!paused) {
-    // Background learning: run trainStep many times per frame.
-    for (let i = 0; i < learnX * 2; i++) {
-      const { genCompleted } = trainStep(state);
-      if (genCompleted && state.gen - lastSavedGen >= 5) {
-        save();
-        lastSavedGen = state.gen;
-      }
+    // Background reinforcement learning: full epsilon-greedy episodes.
+    for (let i = 0; i < learnX; i++) {
+      trainEpisode(agE, agP, EXPLORE, EXPLORE, 15);
+      episodes++;
+      if (episodes - savedAtEp >= 20) { save(); savedAtEp = episodes; }
     }
 
-    // Foreground exhibition match advances at true real time, but freezes
-    // while you are interacting so the scene stays stable to edit.
+    // Foreground exhibition match: the same brains, played near-greedily
+    // at true real time. Freezes while you interact so the scene is stable.
     if (now >= holdUntil && !pointerDown) {
       if (w.over) {
         startRound();
@@ -242,11 +252,20 @@ function animate(now) {
         acc += dtReal;
         let guard = 0;
         while (acc >= CFG.DT && !w.over && guard++ < 8) {
-          step(w, show.evaderGenome, show.pursuerGenome);
+          const aE = act(agE, sE, 0.02);
+          const aP = act(agP, sP, 0.02);
+          const [evx, evz] = actionVel(aE, CFG.SPEED_E);
+          const [pvx, pvz] = actionVel(aP, CFG.SPEED_P);
+          applyStep(w, evx, evz, pvx, pvz);
+          sE = Float64Array.from(sense(w, "evader"));
+          sP = Float64Array.from(sense(w, "pursuer"));
           acc -= CFG.DT;
         }
         if (w.over) {
           const escaped = w.outcome === "escaped";
+          rounds++;
+          if (!escaped) { catches++; sumCatchT += w.t; }
+          if (rounds >= 30) { rounds = catches = sumCatchT = 0; }
           showBanner(
             escaped ? "RED ESCAPED — RED WINS" : "BLUE CAUGHT RED",
             escaped ? "#ff5a7a" : "#5ab4ff"
@@ -291,13 +310,13 @@ function animate(now) {
   camera.lookAt(0, 0, 0);
 
   if ((frame++ & 7) === 0) {
-    $("gen").textContent = state.gen.toLocaleString();
-    $("ind").textContent = `${Math.round(genProgress(state) * 100)}% of gen`;
+    $("gen").textContent = episodes.toLocaleString();
+    $("ind").textContent = EXPLORE.toFixed(2);
     $("surv").textContent = `${w.t.toFixed(1)}s / ${CFG.ESCAPE_T}s`;
-    $("bestE").textContent =
-      isFinite(state.bestEvaderFit) ? state.bestEvaderFit.toFixed(1) : "—";
     $("bestP").textContent =
-      isFinite(state.bestPursuerFit) ? state.bestPursuerFit.toFixed(1) : "—";
+      rounds ? `${Math.round((100 * catches) / rounds)}%` : "—";
+    $("bestE").textContent =
+      catches ? `${(sumCatchT / catches).toFixed(1)}s` : "—";
   }
   renderer.render(scene, camera);
 }

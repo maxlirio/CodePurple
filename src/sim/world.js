@@ -229,6 +229,19 @@ export function step(w, evaderGenome, pursuerGenome) {
   else if (w.t >= CFG.ESCAPE_T) { w.over = true; w.outcome = "escaped"; }
 }
 
+// Advance one timestep from explicit desired velocities instead of genomes.
+// Used by the DQN path (the agents choose discrete actions -> velocities).
+export function applyStep(w, evVx, evVz, puVx, puVz) {
+  if (w.over) return;
+  moveAgent(w.evader, w, w, evVx, evVz);
+  moveAgent(w.pursuer, w, w, puVx, puVz);
+  settleBlocks(w);
+  w.t += CFG.DT;
+  const d = Math.hypot(w.evader.x - w.pursuer.x, w.evader.z - w.pursuer.z);
+  if (d < CFG.CATCH_R) { w.over = true; w.outcome = "caught"; }
+  else if (w.t >= CFG.ESCAPE_T) { w.over = true; w.outcome = "escaped"; }
+}
+
 // Run a full headless episode and return fitness for both sides.
 export function runEpisode(evaderGenome, pursuerGenome, rng = Math.random) {
   const w = createWorld();

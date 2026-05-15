@@ -46,6 +46,25 @@ Because GitHub Pages is a static host, training runs in *your* browser
 while the page is open — that is the "watch them learn" part. Use the
 speed buttons (1×–16×) to fast-forward many generations of learning.
 
+## Alternate brain: Deep Q-Network (this `dqn` branch)
+
+This branch swaps the learning method from **neuroevolution** to a
+from-scratch **Deep Q-Network** (reinforcement learning): an MLP with
+backprop + Adam, experience replay, a target network and Double-DQN
+targets (`src/rl/`). Each cube is an independent DQN agent choosing from
+9 discrete moves; per-step distance rewards plus a decisive catch/escape
+terminal reward. You watch them play near-greedily in real time while
+epsilon-greedy training episodes run in the background.
+
+The stable neuroevolution version remains on `main` (it's what's
+deployed). To try this one locally:
+
+```bash
+git checkout dqn
+npm run seed:dqn      # optional: regenerate src/rl-seed.json
+npm run serve         # http://localhost:5173
+```
+
 ## Run locally
 
 ```bash
