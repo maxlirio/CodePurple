@@ -258,8 +258,18 @@ function animate(now) {
     }
   }
 
-  redMesh.position.set(w.evader.x, CFG.AGENT_R, w.evader.z);
-  blueMesh.position.set(w.pursuer.x, CFG.AGENT_R, w.pursuer.z);
+  // Visual-only smoothing: ease each cube's *rendered* position toward its
+  // true simulation position. Removes the 30 Hz jitter to the eye without
+  // touching the physics, sensors, catch detection or learning. Large jumps
+  // (round reset, dragging) snap instead of sliding across the arena.
+  const k = 1 - Math.exp(-16 * dtReal);
+  const smooth = (mesh, x, z) => {
+    const dx = x - mesh.position.x, dz = z - mesh.position.z;
+    if (Math.hypot(dx, dz) > 3) mesh.position.set(x, CFG.AGENT_R, z);
+    else { mesh.position.x += dx * k; mesh.position.z += dz * k; }
+  };
+  smooth(redMesh, w.evader.x, w.evader.z);
+  smooth(blueMesh, w.pursuer.x, w.pursuer.z);
   redMesh.rotation.y += 0.03;
   blueMesh.rotation.y -= 0.03;
   for (let i = 0; i < blockMeshes.length; i++) {
