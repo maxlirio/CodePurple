@@ -187,6 +187,59 @@ export function learn(ag) {
   if (++ag.steps % ag.sync === 0) copyInto(tgt, net);
 }
 
+// Behavior cloning: supervised step that pushes the net to pick the
+// demonstrated action (softmax cross-entropy over the Q outputs treated as
+// logits). `batch` is an array of { s, a } from a scripted teacher.
+export function bcLearn(ag, batch) {
+  const net = ag.net;
+  const gW = net.W.map((w) => new Float64Array(w.length));
+  const gb = net.b.map((b) => new Float64Array(b.length));
+
+  for (const e of batch) {
+    const fwd = forward(net, e.s);
+    const out = fwd.out;
+    let mx = out[0];
+    for (let i = 1; i < out.length; i++) if (out[i] > mx) mx = out[i];
+    let sum = 0;
+    const p = new Float64Array(out.length);
+    for (let i = 0; i < out.length; i++) { p[i] = Math.exp(out[i] - mx); sum += p[i]; }
+    let dz = new Float64Array(out.length);
+    for (let i = 0; i < out.length; i++) dz[i] = p[i] / sum;
+    dz[e.a] -= 1; // softmax-CE gradient
+
+    for (let l = net.L - 1; l >= 0; l--) {
+      const ni = net.sizes[l], no = net.sizes[l + 1];
+      const aPrev = fwd.acts[l], w = net.W[l];
+      const gw = gW[l], gbb = gb[l];
+      for (let o = 0; o < no; o++) {
+        const dd = dz[o];
+        if (dd === 0) continue;
+        gbb[o] += dd;
+        const base = o * ni;
+        for (let i = 0; i < ni; i++) gw[base + i] += dd * aPrev[i];
+      }
+      if (l > 0) {
+        const dPrev = new Float64Array(ni);
+        const zPrev = fwd.zs[l - 1];
+        for (let i = 0; i < ni; i++) {
+          if (zPrev[i] <= 0) continue;
+          let s = 0;
+          for (let o = 0; o < no; o++) s += w[o * ni + i] * dz[o];
+          dPrev[i] = s;
+        }
+        dz = dPrev;
+      }
+    }
+  }
+  const inv = 1 / batch.length;
+  for (let l = 0; l < net.L; l++) {
+    for (let i = 0; i < gW[l].length; i++) gW[l][i] *= inv;
+    for (let o = 0; o < gb[l].length; o++) gb[l][o] *= inv;
+  }
+  adam(net, gW, gb);
+  copyInto(ag.target, ag.net); // keep target aligned with the cloned policy
+}
+
 // ---- Persistence (rl-seed.json + localStorage) ----
 export function serializeAgent(ag) {
   return {
