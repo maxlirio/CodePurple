@@ -11,10 +11,14 @@ export const ACTIONS = (() => {
     const ang = (i / 8) * Math.PI * 2;
     a.push([Math.cos(ang), Math.sin(ang)]);
   }
-  return a; // length 9
+  return a; // length 9 (index 0 = stay, 1..8 = compass directions)
 })();
 
-const SIZES = [15, 48, 48, ACTIONS.length];
+// One extra discrete action beyond movement: index 9 = "interact" (grab a
+// nearby block, or drop the carried one). 18 sensor inputs.
+export const INTERACT = ACTIONS.length; // = 9
+export const N_ACT = ACTIONS.length + 1; // = 10
+const SIZES = [18, 48, 48, N_ACT];
 const GAMMA = 0.99;
 const LR = 5e-4;
 const B1 = 0.9, B2 = 0.999, EPS = 1e-8;
@@ -195,6 +199,9 @@ export function serializeAgent(ag) {
 
 export function deserializeAgent(d) {
   if (!d || !d.W) return null;
+  // Reject brains from an older action/observation shape.
+  if (d.sizes && (d.sizes[0] !== SIZES[0] ||
+      d.sizes[d.sizes.length - 1] !== N_ACT)) return null;
   const ag = createAgent();
   for (let l = 0; l < ag.net.L; l++) {
     ag.net.W[l] = Float64Array.from(d.W[l]);

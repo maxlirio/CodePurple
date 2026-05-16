@@ -13,6 +13,7 @@ export const CFG = {
   MAX_SPEED: 7.2,   // used only to normalise sensor inputs
   ACCEL: 22.0,      // how fast an agent reaches its desired velocity
   BLOCK_H: 1.1,     // pushable block half-size
+  PICK_R: 2.6,      // reach for picking up a block
   N_BLOCKS: 11,
   N_RAYS: 8,
   RAY_RANGE: 16,
@@ -25,8 +26,9 @@ function rand(rng, a, b) { return a + (b - a) * rng(); }
 export function createWorld() {
   return {
     t: 0,
-    evader: { x: 0, z: 0, vx: 0, vz: 0 }, // red
-    pursuer: { x: 0, z: 0, vx: 0, vz: 0 }, // blue
+    // carry = the block object this cube is holding over its head, or null.
+    evader: { x: 0, z: 0, vx: 0, vz: 0, carry: null }, // red
+    pursuer: { x: 0, z: 0, vx: 0, vz: 0, carry: null }, // blue
     blocks: Array.from({ length: CFG.N_BLOCKS }, () => ({ x: 0, z: 0 })),
     // User sandbox objects. They persist across rounds (reset() leaves them
     // alone) and the AIs sense + collide with them just like procedural ones.
@@ -79,13 +81,25 @@ export function reset(w, rng = Math.random) {
   w.pursuer.x = rand(rng, A * 0.3, A * 0.7);
   w.pursuer.z = rand(rng, -A * 0.7, A * 0.7);
   w.pursuer.vx = w.pursuer.vz = 0;
-  // Scatter blocks, keeping clear of both spawns.
+  // Drop anything carried and un-hold every block for the new round.
+  w.evader.carry = w.pursuer.carry = null;
+  for (const b of w.blocks) b.held = false;
+  for (const b of w.userBlocks) b.held = false;
+  // Scatter blocks, clear of both spawns and not overlapping each other
+  // (blocks are solid and never move on their own now).
   const lim = A - CFG.BLOCK_H - 0.5;
-  for (const b of w.blocks) {
-    for (let tries = 0; tries < 30; tries++) {
+  const minGap = (2 * CFG.BLOCK_H + 0.5) ** 2;
+  for (let i = 0; i < w.blocks.length; i++) {
+    const b = w.blocks[i];
+    for (let tries = 0; tries < 40; tries++) {
       b.x = rand(rng, -lim, lim);
       b.z = rand(rng, -lim, lim);
-      if (dist2(b, w.evader) > 9 && dist2(b, w.pursuer) > 9) break;
+      if (dist2(b, w.evader) <= 9 || dist2(b, w.pursuer) <= 9) continue;
+      let clash = false;
+      for (let j = 0; j < i; j++) {
+        if (dist2(b, w.blocks[j]) < minGap) { clash = true; break; }
+      }
+      if (!clash) break;
     }
   }
   return w;
@@ -109,6 +123,7 @@ function rayClearance(ox, oz, dx, dz, w) {
   // Every square (procedural, user pushable, user wall) via the slab method.
   for (const list of [w.blocks, w.userBlocks, w.statics]) {
     for (const b of list) {
+      if (b.held) continue; // carried blocks are out of play
       const tx1 = (b.x - h - ox) / dx, tx2 = (b.x + h - ox) / dx;
       const tz1 = (b.z - h - oz) / dz, tz2 = (b.z + h - oz) / dz;
       const tmin = Math.max(Math.min(tx1, tx2), Math.min(tz1, tz2));
@@ -119,7 +134,43 @@ function rayClearance(ox, oz, dx, dz, w) {
   return Math.max(0, Math.min(1, best / R));
 }
 
-// Build the 15-element sensor vector for one agent.
+// Is the straight line from (ax,az) to (bx,bz) blocked by any solid block
+// or wall? Used to reward red for hiding behind cover it built.
+export function lineOccluded(w, ax, az, bx, bz) {
+  const h = CFG.BLOCK_H;
+  let dx = bx - ax, dz = bz - az;
+  if (Math.abs(dx) < 1e-6) dx = 1e-6;
+  if (Math.abs(dz) < 1e-6) dz = 1e-6;
+  for (const list of [w.blocks, w.userBlocks, w.statics]) {
+    for (const o of list) {
+      if (o.held) continue;
+      const tx1 = (o.x - h - ax) / dx, tx2 = (o.x + h - ax) / dx;
+      const tz1 = (o.z - h - az) / dz, tz2 = (o.z + h - az) / dz;
+      const tmin = Math.max(Math.min(tx1, tx2), Math.min(tz1, tz2));
+      const tmax = Math.min(Math.max(tx1, tx2), Math.max(tz1, tz2));
+      if (tmax >= Math.max(tmin, 0) && tmin <= 1 && tmax >= 0) return true;
+    }
+  }
+  return false;
+}
+
+// Nearest pickable (non-held) block to a point, or null. Statics and the
+// agent's own carried block are not pickable.
+export function nearestPickable(w, x, z) {
+  let best = null, bd = Infinity;
+  for (const list of [w.blocks, w.userBlocks]) {
+    for (const b of list) {
+      if (b.held) continue;
+      const dd = (b.x - x) * (b.x - x) + (b.z - z) * (b.z - z);
+      if (dd < bd) { bd = dd; best = b; }
+    }
+  }
+  return best ? { ref: best, dist: Math.sqrt(bd) } : null;
+}
+
+// Build the 18-element sensor vector for one agent: opponent (3), own &
+// foe velocity (4), 8 rangefinder rays, then 3 carry/terrain inputs:
+// am-I-carrying, and the relative vector to the nearest pickable block.
 export function sense(w, who) {
   const me = who === "evader" ? w.evader : w.pursuer;
   const foe = who === "evader" ? w.pursuer : w.evader;
@@ -134,6 +185,10 @@ export function sense(w, who) {
     const a = (i / CFG.N_RAYS) * Math.PI * 2;
     inp.push(rayClearance(me.x, me.z, Math.cos(a), Math.sin(a), w));
   }
+  const np = me.carry ? null : nearestPickable(w, me.x, me.z);
+  inp.push(me.carry ? 1 : 0);
+  inp.push(np ? (np.ref.x - me.x) / (2 * A) : 0);
+  inp.push(np ? (np.ref.z - me.z) / (2 * A) : 0);
   return inp;
 }
 
@@ -144,9 +199,12 @@ function moveAgent(ag, ox, oz, desX, desZ) {
   ag.vz += (desZ - ag.vz) * Math.min(1, CFG.ACCEL * dt);
   ag.x += ag.vx * dt;
   ag.z += ag.vz * dt;
-  // Pushable squares (procedural + user) slide away; static walls don't.
+  // Every block is a SOLID wall. Cubes cannot shove blocks — the only way
+  // to move one is to pick it up and place it. So collision always pushes
+  // the agent out; the block never moves.
   const ar = CFG.AGENT_R, h = CFG.BLOCK_H;
-  const resolve = (b, movable) => {
+  const resolve = (b) => {
+    if (b.held) return; // carried blocks don't collide
     const cx = Math.max(b.x - h, Math.min(ag.x, b.x + h));
     const cz = Math.max(b.z - h, Math.min(ag.z, b.z + h));
     let nx = ag.x - cx, nz = ag.z - cz;
@@ -154,20 +212,13 @@ function moveAgent(ag, ox, oz, desX, desZ) {
     if (dd < ar && dd > 1e-5) {
       const pen = ar - dd;
       nx /= dd; nz /= dd;
-      if (movable) {
-        b.x -= nx * pen * 0.6; // block slides away (passageway forming)
-        b.z -= nz * pen * 0.6;
-        ag.x += nx * pen * 0.4; // agent stops short
-        ag.z += nz * pen * 0.4;
-      } else {
-        ag.x += nx * pen; // wall is immovable: push the agent fully out
-        ag.z += nz * pen;
-      }
+      ag.x += nx * pen;
+      ag.z += nz * pen;
     }
   };
-  for (const b of ox.blocks) resolve(b, true);
-  for (const b of ox.userBlocks) resolve(b, true);
-  for (const b of ox.statics) resolve(b, false);
+  for (const b of ox.blocks) resolve(b);
+  for (const b of ox.userBlocks) resolve(b);
+  for (const b of ox.statics) resolve(b);
   // Clamp agent inside the arena.
   const lim = CFG.A - ar;
   ag.x = Math.max(-lim, Math.min(lim, ag.x));
@@ -177,8 +228,11 @@ function moveAgent(ag, ox, oz, desX, desZ) {
 
 function settleBlocks(w) {
   const A = CFG.A, h = CFG.BLOCK_H, lim = A - h;
-  // Pushables = procedural + user blocks (statics never move).
-  const bl = w.userBlocks.length ? w.blocks.concat(w.userBlocks) : w.blocks;
+  // Pushables = procedural + user blocks, minus any being carried.
+  const anyHeld = w.evader.carry || w.pursuer.carry;
+  const bl = (!anyHeld && !w.userBlocks.length)
+    ? w.blocks
+    : w.blocks.concat(w.userBlocks).filter((b) => !b.held);
   const st = w.statics;
   for (let pass = 0; pass < 2; pass++) {
     for (let i = 0; i < bl.length; i++) {
@@ -229,17 +283,101 @@ export function step(w, evaderGenome, pursuerGenome) {
   else if (w.t >= CFG.ESCAPE_T) { w.over = true; w.outcome = "escaped"; }
 }
 
+// Grab the nearest block within reach (if hands are empty). Returns true
+// if a block was picked up.
+function doPickup(w, ag) {
+  if (ag.carry) return false;
+  const np = nearestPickable(w, ag.x, ag.z);
+  if (np && np.dist <= CFG.PICK_R) {
+    np.ref.held = true;
+    ag.carry = np.ref;
+    return true;
+  }
+  return false;
+}
+
+// Is (x,z) a clear spot to drop a block (no wall/other block/agent there)?
+function spotClear(w, b, x, z) {
+  const h = CFG.BLOCK_H, A = CFG.A;
+  if (Math.abs(x) > A - h || Math.abs(z) > A - h) return false;
+  const overlaps = (o) =>
+    o !== b && !o.held &&
+    Math.abs(o.x - x) < 2 * h && Math.abs(o.z - z) < 2 * h;
+  for (const o of w.blocks) if (overlaps(o)) return false;
+  for (const o of w.userBlocks) if (overlaps(o)) return false;
+  for (const o of w.statics)
+    if (Math.abs(o.x - x) < 2 * h && Math.abs(o.z - z) < 2 * h) return false;
+  const onAgent = (ag) =>
+    Math.abs(ag.x - x) < h + CFG.AGENT_R &&
+    Math.abs(ag.z - z) < h + CFG.AGENT_R;
+  return !onAgent(w.evader) && !onAgent(w.pursuer);
+}
+
+// Set the carried block down on a clear spot in front of the cube (it drops
+// toward the opponent when the cube is still — i.e. between them). Returns
+// the placed block, or null.
+function doPlace(w, ag, foe) {
+  const b = ag.carry;
+  if (!b) return null;
+  let dirx = ag.vx, dirz = ag.vz;
+  let m = Math.hypot(dirx, dirz);
+  if (m < 0.3) { // barely moving: drop on the side facing the opponent
+    dirx = foe.x - ag.x; dirz = foe.z - ag.z;
+    m = Math.hypot(dirx, dirz) || 1;
+  }
+  dirx /= m; dirz /= m;
+  const lim = CFG.A - CFG.BLOCK_H;
+  const base = CFG.AGENT_R + CFG.BLOCK_H + 0.15;
+  let px = ag.x + dirx * base, pz = ag.z + dirz * base;
+  // Try a few distances/angles to find a non-overlapping spot.
+  outer: for (const extra of [0, 0.7, 1.4]) {
+    for (const ang of [0, 0.6, -0.6, 1.2, -1.2]) {
+      const c = Math.cos(ang), s = Math.sin(ang);
+      const ux = dirx * c - dirz * s, uz = dirx * s + dirz * c;
+      const x = ag.x + ux * (base + extra), z = ag.z + uz * (base + extra);
+      if (spotClear(w, b, x, z)) { px = x; pz = z; break outer; }
+    }
+  }
+  b.x = Math.max(-lim, Math.min(lim, px));
+  b.z = Math.max(-lim, Math.min(lim, pz));
+  b.held = false;
+  ag.carry = null;
+  return b;
+}
+
 // Advance one timestep from explicit desired velocities instead of genomes.
-// Used by the DQN path (the agents choose discrete actions -> velocities).
-export function applyStep(w, evVx, evVz, puVx, puVz) {
-  if (w.over) return;
-  moveAgent(w.evader, w, w, evVx, evVz);
-  moveAgent(w.pursuer, w, w, puVx, puVz);
+// Used by the DQN path. `evInteract`/`puInteract` mean that cube spent the
+// turn grabbing or dropping a block instead of moving. Returns which blocks
+// (if any) were just placed, for reward shaping.
+export function applyStep(w, evVx, evVz, puVx, puVz, evInteract, puInteract) {
+  if (w.over) return { evPlaced: null, puPlaced: null };
+  // Grabbing/placing is instant: an interacting cube keeps coasting on its
+  // current momentum instead of stopping dead, so building costs almost no
+  // tempo against the pursuer.
+  moveAgent(w.evader, w, w,
+    evInteract ? w.evader.vx : evVx, evInteract ? w.evader.vz : evVz);
+  moveAgent(w.pursuer, w, w,
+    puInteract ? w.pursuer.vx : puVx, puInteract ? w.pursuer.vz : puVz);
+
+  let evPlaced = null, puPlaced = null;
+  if (evInteract) {
+    evPlaced = w.evader.carry
+      ? doPlace(w, w.evader, w.pursuer) : (doPickup(w, w.evader), null);
+  }
+  if (puInteract) {
+    puPlaced = w.pursuer.carry
+      ? doPlace(w, w.pursuer, w.evader) : (doPickup(w, w.pursuer), null);
+  }
+  // Held blocks ride above their carrier (kept sane for any readers).
+  if (w.evader.carry) { w.evader.carry.x = w.evader.x; w.evader.carry.z = w.evader.z; }
+  if (w.pursuer.carry) { w.pursuer.carry.x = w.pursuer.x; w.pursuer.carry.z = w.pursuer.z; }
+
   settleBlocks(w);
   w.t += CFG.DT;
   const d = Math.hypot(w.evader.x - w.pursuer.x, w.evader.z - w.pursuer.z);
   if (d < CFG.CATCH_R) { w.over = true; w.outcome = "caught"; }
   else if (w.t >= CFG.ESCAPE_T) { w.over = true; w.outcome = "escaped"; }
+  return { evPlaced, puPlaced };
 }
 
 // Run a full headless episode and return fitness for both sides.

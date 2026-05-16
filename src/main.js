@@ -12,9 +12,11 @@ import {
 import {
   createAgent, act, serializeAgent, deserializeAgent,
 } from "./rl/dqn.js";
-import { actionVel, trainEpisode } from "./rl/env.js";
+import { actionVel, trainEpisode, INTERACT } from "./rl/env.js";
 
-const LS_KEY = "codepurple.rl.v1";
+// v2: cubes can now carry & place blocks (new action + 3 new sensors),
+// so the brain shape changed and old saved brains are superseded.
+const LS_KEY = "codepurple.rl.v2";
 
 // ---- Load brains: saved progress > committed seed > fresh ----
 async function loadAgents() {
@@ -256,7 +258,7 @@ function animate(now) {
           const aP = act(agP, sP, 0.02);
           const [evx, evz] = actionVel(aE, CFG.SPEED_E);
           const [pvx, pvz] = actionVel(aP, CFG.SPEED_P);
-          applyStep(w, evx, evz, pvx, pvz);
+          applyStep(w, evx, evz, pvx, pvz, aE === INTERACT, aP === INTERACT);
           sE = Float64Array.from(sense(w, "evader"));
           sP = Float64Array.from(sense(w, "pursuer"));
           acc -= CFG.DT;
@@ -290,14 +292,20 @@ function animate(now) {
   smooth(blueMesh, w.pursuer.x, w.pursuer.z);
   redMesh.rotation.y += 0.03;
   blueMesh.rotation.y -= 0.03;
-  for (let i = 0; i < blockMeshes.length; i++) {
-    blockMeshes[i].position.x = w.blocks[i].x;
-    blockMeshes[i].position.z = w.blocks[i].z;
-  }
-  for (let i = 0; i < userMeshes.length; i++) {
-    userMeshes[i].position.x = w.userBlocks[i].x;
-    userMeshes[i].position.z = w.userBlocks[i].z;
-  }
+  // A carried block hovers over its carrier's head; otherwise it sits on
+  // the ground at its sim position.
+  const carrierMesh = (b) =>
+    b === w.evader.carry ? redMesh
+      : b === w.pursuer.carry ? blueMesh : null;
+  const placeBlockMesh = (mesh, b) => {
+    const cm = carrierMesh(b);
+    if (cm) mesh.position.set(cm.position.x, 2.8, cm.position.z);
+    else mesh.position.set(b.x, 1, b.z);
+  };
+  for (let i = 0; i < blockMeshes.length; i++)
+    placeBlockMesh(blockMeshes[i], w.blocks[i]);
+  for (let i = 0; i < userMeshes.length; i++)
+    placeBlockMesh(userMeshes[i], w.userBlocks[i]);
   for (let i = 0; i < staticMeshes.length; i++) {
     staticMeshes[i].position.x = w.statics[i].x;
     staticMeshes[i].position.z = w.statics[i].z;

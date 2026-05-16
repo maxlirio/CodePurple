@@ -2,12 +2,19 @@
 // with per-step rewards and the experience-collection loop. Shared by the
 // headless trainer and the in-browser learning loop.
 
-import { createWorld, reset, sense, applyStep, CFG } from "../sim/world.js";
-import { ACTIONS, act, remember, learn } from "./dqn.js";
+import {
+  createWorld, reset, sense, applyStep, lineOccluded, CFG,
+} from "../sim/world.js";
+import { ACTIONS, INTERACT, act, remember, learn } from "./dqn.js";
+
+export { INTERACT } from "./dqn.js";
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
+// Movement actions map to a velocity; the interact action means "don't
+// move, grab/drop instead" so its velocity is zero.
 export function actionVel(idx, speed) {
+  if (idx === INTERACT) return [0, 0];
   const [dx, dz] = ACTIONS[idx];
   return [dx * speed, dz * speed];
 }
@@ -26,6 +33,19 @@ export function rewards(d0, d1, outcome) {
   return [rE, rP];
 }
 
+// Reward red for using terrain as cover: a one-time payout when a block it
+// just placed breaks blue's line of sight, plus a small ongoing bonus for
+// every step it stays hidden behind a wall. Escaping (+1 terminal) still
+// dominates, so this guides discovery without distorting the goal.
+function buildReward(w, placedByRed) {
+  const hidden = lineOccluded(
+    w, w.pursuer.x, w.pursuer.z, w.evader.x, w.evader.z
+  );
+  let r = hidden ? 0.006 : 0;
+  if (placedByRed && hidden) r += 0.15; // built itself cover this step
+  return r;
+}
+
 // Run one training episode: both agents explore (epsilon), collect
 // transitions, and learn every few steps. Returns episode stats.
 export function trainEpisode(agE, agP, epsE, epsP, maxT, learnEvery = 6) {
@@ -42,8 +62,11 @@ export function trainEpisode(agE, agP, epsE, epsP, maxT, learnEvery = 6) {
     const d0 = gap(w);
     const [evx, evz] = actionVel(aE, CFG.SPEED_E);
     const [pvx, pvz] = actionVel(aP, CFG.SPEED_P);
-    applyStep(w, evx, evz, pvx, pvz);
-    const [rE, rP] = rewards(d0, gap(w), w.outcome);
+    const placed = applyStep(
+      w, evx, evz, pvx, pvz, aE === INTERACT, aP === INTERACT
+    );
+    let [rE, rP] = rewards(d0, gap(w), w.outcome);
+    rE += buildReward(w, !!placed.evPlaced);
     const nE = Float64Array.from(sense(w, "evader"));
     const nP = Float64Array.from(sense(w, "pursuer"));
     const done = w.over ? 1 : 0;
