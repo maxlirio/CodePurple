@@ -1,6 +1,6 @@
 # CodePurple
 
-A 3D arena where two **co-evolving neural-network cubes** learn forever:
+A 3D arena where two **reinforcement-learning neural-network cubes** learn forever:
 
 - 🟥 **Red** is an AI that learns to *run away and escape*.
 - 🟦 **Blue** is an AI that learns to *hunt red down and catch it*.
@@ -29,41 +29,35 @@ and persists across visits.
 ## How it works
 
 - **Rendering:** [Three.js](https://threejs.org) (loaded from a CDN). No build step.
-- **Brains:** a tiny from-scratch neural net (`15 → 20 → 16 → 2`, tanh),
-  one per cube, encoded as a flat weight vector — see `src/sim/nn.js`.
-- **Learning:** neuroevolution. Two separate populations (evaders and
-  pursuers) compete; the fittest are selected, crossed over and mutated
-  into the next generation — see `src/sim/evolve.js`.
+- **Brains:** a from-scratch **Deep Q-Network** — MLP with backprop + Adam,
+  experience replay, a target network and Double-DQN targets — one agent
+  per cube, see `src/rl/dqn.js`.
+- **Learning:** reinforcement learning. Each cube chooses from 9 discrete
+  moves; dense per-step distance rewards plus a decisive catch/escape
+  terminal reward. You watch them play near-greedily in real time while
+  epsilon-greedy training episodes run in the background — see `src/rl/env.js`.
 - **World:** continuous physics on a plane with pushable blocks, wall/block
   rangefinder sensors, catch detection and the 2-minute escape rule —
   see `src/sim/world.js`.
 - **Persistence:** progress is saved to your browser's `localStorage`, so
   it resumes and keeps improving every visit. A pre-trained **seed brain**
-  (`src/seed.json`) ships in the repo so the cubes already look competent
-  on the very first load.
+  (`src/rl-seed.json`) ships in the repo so the cubes already look
+  competent on the very first load.
 
-Because GitHub Pages is a static host, training runs in *your* browser
+Because GitHub Pages is a static host, learning runs in *your* browser
 while the page is open — that is the "watch them learn" part. Use the
-speed buttons (1×–16×) to fast-forward many generations of learning.
+speed buttons to run more training episodes per frame.
 
-## Alternate brain: Deep Q-Network (this `dqn` branch)
+## History: the neuroevolution version
 
-This branch swaps the learning method from **neuroevolution** to a
-from-scratch **Deep Q-Network** (reinforcement learning): an MLP with
-backprop + Adam, experience replay, a target network and Double-DQN
-targets (`src/rl/`). Each cube is an independent DQN agent choosing from
-9 discrete moves; per-step distance rewards plus a decisive catch/escape
-terminal reward. You watch them play near-greedily in real time while
-epsilon-greedy training episodes run in the background.
-
-The stable neuroevolution version remains on `main` (it's what's
-deployed). To try this one locally:
-
-```bash
-git checkout dqn
-npm run seed:dqn      # optional: regenerate src/rl-seed.json
-npm run serve         # http://localhost:5173
-```
+CodePurple was originally built with **neuroevolution** (evolving
+populations of `15 → 20 → 16 → 2` tanh nets via selection / crossover /
+mutation, with a Hall of Fame). It worked but kept settling into a
+passive, twitchy mutual-avoidance equilibrium — a known weakness of
+two-population co-evolution for pursuit-evasion. The DQN above replaced
+it as the live build. The full neuroevolution implementation is preserved
+on the [`neuroevolution`](https://github.com/maxlirio/CodePurple/tree/neuroevolution)
+branch (`src/sim/evolve.js`, `scripts/train-seed.mjs`).
 
 ## Run locally
 
@@ -75,11 +69,13 @@ npm run serve        # then open http://localhost:5173
 ## Re-train the seed brain
 
 ```bash
-npm run seed                 # ~80 generations (default)
-node scripts/train-seed.mjs 150 300   # 150 gens, max 300s
+npm run seed:dqn                      # ~600 episodes (default)
+node src/rl/train-dqn.mjs 1000 200    # 1000 episodes, max 200s
 ```
 
-This regenerates `src/seed.json`. Commit it to ship a smarter starting point.
+This regenerates `src/rl-seed.json`. Commit it to ship a smarter starting
+point. (The archived neuroevolution trainer is `npm run seed` on the
+`neuroevolution` branch.)
 
 ## License
 
