@@ -33,34 +33,17 @@ export function rewards(d0, d1, outcome) {
   return [rE, rP];
 }
 
-// How many blocks red has placed that are clustered around it right now —
-// a proxy for "structure size" (a wall/enclosure, not one lone block).
-function redStructure(w) {
-  const R2 = (3.2 * CFG.BLOCK_H) ** 2;
-  let n = 0;
-  for (const list of [w.blocks, w.userBlocks]) {
-    for (const b of list) {
-      if (b.held || !b.byRed) continue;
-      const dx = b.x - w.evader.x, dz = b.z - w.evader.z;
-      if (dx * dx + dz * dz < R2) n++;
-    }
-  }
-  return n;
-}
-
-// Reward red for using terrain as cover, scaled by how COMPLEX the cover
-// is: the rising-edge payout grows with the size of the structure red has
-// built around itself (2 blocks > 1, capped), so a real wall/enclosure
-// pays far more than one lone block. Rising-edge only => no farming.
+// Reward red for using terrain as cover. The big payout fires only on the
+// *rising edge* — the moment a placed block first breaks blue's sight line
+// — so re-placing a block while already hidden earns nothing (kills the
+// "place over and over to farm the bonus" exploit). A tiny ongoing bonus
+// rewards staying hidden. Escaping (+1) still dominates the goal.
 function buildReward(w, placedByRed, prevHidden, scale = 1) {
   const hidden = lineOccluded(
     w, w.pursuer.x, w.pursuer.z, w.evader.x, w.evader.z
   );
-  let r = hidden ? 0.008 : 0;
-  if (placedByRed && hidden && !prevHidden) {
-    const struct = Math.min(redStructure(w), 5); // 1..5 blocks
-    r += 0.12 * struct * scale; // escalates with structure complexity
-  }
+  let r = hidden ? 0.006 : 0;
+  if (placedByRed && hidden && !prevHidden) r += 0.15 * scale; // took cover
   return { r, hidden };
 }
 
@@ -103,11 +86,6 @@ export function trainEpisode(
     let [rE, rP] = rewards(d0, gap(w), w.outcome);
     const bw = buildReward(w, !!placed.evPlaced, prevHidden, buildScale);
     rE += bw.r;
-    // Sharp ongoing penalty for being EXPOSED (blue has line of sight).
-    // This is the "scream": continuous pressure to get behind cover it
-    // builds — tied to exposure (a state red can fix), not to the
-    // unavoidable act of not-building (which collapsed training before).
-    if (!bw.hidden) rE -= 0.012;
     prevHidden = bw.hidden;
     const nE = Float64Array.from(sense(w, "evader"));
     const nP = Float64Array.from(sense(w, "pursuer"));

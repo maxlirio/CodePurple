@@ -14,10 +14,9 @@ import {
 } from "./rl/dqn.js";
 import { actionVel, trainEpisode, INTERACT } from "./rl/env.js";
 
-// v9: red cloned from a scripted builder (imitation) + red made slower
-// than blue so building is necessary, then RL fine-tuned. Supersedes
-// older saved brains.
-const LS_KEY = "codepurple.rl.v9";
+// v7: construction-forcing curriculum (full-speed but non-catching blue
+// during discovery so red must wall it off). Supersedes older brains.
+const LS_KEY = "codepurple.rl.v7";
 
 // ---- Load brains: saved progress > committed seed > fresh ----
 async function loadAgents() {

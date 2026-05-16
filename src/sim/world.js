@@ -8,8 +8,8 @@ export const CFG = {
   A: 16,            // arena half-extent (32 x 32 floor)
   AGENT_R: 0.7,     // agent radius
   CATCH_R: 1.4,     // distance at which blue "catches" red
-  SPEED_E: 5.5,     // red is clearly slower than blue: it CANNOT win by
-  SPEED_P: 7.2,     // running, so building cover becomes necessary, not optional
+  SPEED_E: 6.4,     // red (evader) top speed, units / second
+  SPEED_P: 7.2,     // blue (pursuer) is a touch faster, so skill matters
   MAX_SPEED: 7.2,   // used only to normalise sensor inputs
   ACCEL: 22.0,      // how fast an agent reaches its desired velocity
   BLOCK_H: 1.1,     // pushable block half-size
@@ -84,8 +84,8 @@ export function reset(w, rng = Math.random) {
   w.pursuer.vx = w.pursuer.vz = 0;
   // Drop anything carried and un-hold/unlock every block for the new round.
   w.evader.carry = w.pursuer.carry = null;
-  for (const b of w.blocks) { b.held = false; b.lockT = 0; b.byRed = false; }
-  for (const b of w.userBlocks) { b.held = false; b.lockT = 0; b.byRed = false; }
+  for (const b of w.blocks) { b.held = false; b.lockT = 0; }
+  for (const b of w.userBlocks) { b.held = false; b.lockT = 0; }
   // Scatter blocks, clear of both spawns and not overlapping each other
   // (blocks are solid and never move on their own now).
   const lim = A - CFG.BLOCK_H - 0.5;
@@ -344,7 +344,6 @@ function doPlace(w, ag, foe) {
   b.z = Math.max(-lim, Math.min(lim, pz));
   b.held = false;
   b.lockT = CFG.PLACE_LOCK; // can't be re-grabbed for a moment
-  b.byRed = ag === w.evader; // who built it (for structure scoring)
   ag.carry = null;
   return b;
 }
