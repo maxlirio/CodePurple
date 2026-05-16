@@ -14,9 +14,9 @@ import {
 } from "./rl/dqn.js";
 import { actionVel, trainEpisode, INTERACT } from "./rl/env.js";
 
-// v2: cubes can now carry & place blocks (new action + 3 new sensors),
-// so the brain shape changed and old saved brains are superseded.
-const LS_KEY = "codepurple.rl.v2";
+// v7: construction-forcing curriculum (full-speed but non-catching blue
+// during discovery so red must wall it off). Supersedes older brains.
+const LS_KEY = "codepurple.rl.v7";
 
 // ---- Load brains: saved progress > committed seed > fresh ----
 async function loadAgents() {

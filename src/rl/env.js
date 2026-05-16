@@ -33,27 +33,39 @@ export function rewards(d0, d1, outcome) {
   return [rE, rP];
 }
 
-// Reward red for using terrain as cover: a one-time payout when a block it
-// just placed breaks blue's line of sight, plus a small ongoing bonus for
-// every step it stays hidden behind a wall. Escaping (+1 terminal) still
-// dominates, so this guides discovery without distorting the goal.
-function buildReward(w, placedByRed) {
+// Reward red for using terrain as cover. The big payout fires only on the
+// *rising edge* — the moment a placed block first breaks blue's sight line
+// — so re-placing a block while already hidden earns nothing (kills the
+// "place over and over to farm the bonus" exploit). A tiny ongoing bonus
+// rewards staying hidden. Escaping (+1) still dominates the goal.
+function buildReward(w, placedByRed, prevHidden, scale = 1) {
   const hidden = lineOccluded(
     w, w.pursuer.x, w.pursuer.z, w.evader.x, w.evader.z
   );
   let r = hidden ? 0.006 : 0;
-  if (placedByRed && hidden) r += 0.15; // built itself cover this step
-  return r;
+  if (placedByRed && hidden && !prevHidden) r += 0.15 * scale; // took cover
+  return { r, hidden };
 }
 
 // Run one training episode: both agents explore (epsilon), collect
 // transitions, and learn every few steps. Returns episode stats.
-export function trainEpisode(agE, agP, epsE, epsP, maxT, learnEvery = 6) {
+// Curriculum knobs (opt): blueScale scales blue's speed; noCatch lets the
+// episode continue even when blue touches red (so during discovery, running
+// can't save red and can't end the episode — only breaking line of sight
+// relieves the pressure, which forces building); buildScale boosts the
+// take-cover reward early. All default to "normal full-strength play".
+export function trainEpisode(
+  agE, agP, epsE, epsP, maxT, learnEvery = 6, opt = {}
+) {
+  const blueScale = opt.blueScale ?? 1;
+  const noCatch = opt.noCatch ?? false;
+  const buildScale = opt.buildScale ?? 1;
   const w = createWorld();
   reset(w);
   let sE = Float64Array.from(sense(w, "evader"));
   let sP = Float64Array.from(sense(w, "pursuer"));
   let steps = 0;
+  let prevHidden = false;
   const maxSteps = Math.ceil(maxT / CFG.DT);
 
   while (!w.over && steps < maxSteps) {
@@ -61,12 +73,20 @@ export function trainEpisode(agE, agP, epsE, epsP, maxT, learnEvery = 6) {
     const aP = act(agP, sP, epsP);
     const d0 = gap(w);
     const [evx, evz] = actionVel(aE, CFG.SPEED_E);
-    const [pvx, pvz] = actionVel(aP, CFG.SPEED_P);
+    const [pvx, pvz] = actionVel(aP, CFG.SPEED_P * blueScale);
     const placed = applyStep(
       w, evx, evz, pvx, pvz, aE === INTERACT, aP === INTERACT
     );
+    // Discovery: blue can't actually catch yet — undo the terminal so the
+    // episode keeps going and red must learn cover, not just survive a hit.
+    if (noCatch && w.outcome === "caught") {
+      w.over = false;
+      w.outcome = null;
+    }
     let [rE, rP] = rewards(d0, gap(w), w.outcome);
-    rE += buildReward(w, !!placed.evPlaced);
+    const bw = buildReward(w, !!placed.evPlaced, prevHidden, buildScale);
+    rE += bw.r;
+    prevHidden = bw.hidden;
     const nE = Float64Array.from(sense(w, "evader"));
     const nP = Float64Array.from(sense(w, "pursuer"));
     const done = w.over ? 1 : 0;

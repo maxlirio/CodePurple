@@ -14,6 +14,7 @@ export const CFG = {
   ACCEL: 22.0,      // how fast an agent reaches its desired velocity
   BLOCK_H: 1.1,     // pushable block half-size
   PICK_R: 2.6,      // reach for picking up a block
+  PLACE_LOCK: 45,   // ticks (~1.5s) a just-placed block can't be re-grabbed
   N_BLOCKS: 11,
   N_RAYS: 8,
   RAY_RANGE: 16,
@@ -81,10 +82,10 @@ export function reset(w, rng = Math.random) {
   w.pursuer.x = rand(rng, A * 0.3, A * 0.7);
   w.pursuer.z = rand(rng, -A * 0.7, A * 0.7);
   w.pursuer.vx = w.pursuer.vz = 0;
-  // Drop anything carried and un-hold every block for the new round.
+  // Drop anything carried and un-hold/unlock every block for the new round.
   w.evader.carry = w.pursuer.carry = null;
-  for (const b of w.blocks) b.held = false;
-  for (const b of w.userBlocks) b.held = false;
+  for (const b of w.blocks) { b.held = false; b.lockT = 0; }
+  for (const b of w.userBlocks) { b.held = false; b.lockT = 0; }
   // Scatter blocks, clear of both spawns and not overlapping each other
   // (blocks are solid and never move on their own now).
   const lim = A - CFG.BLOCK_H - 0.5;
@@ -160,7 +161,7 @@ export function nearestPickable(w, x, z) {
   let best = null, bd = Infinity;
   for (const list of [w.blocks, w.userBlocks]) {
     for (const b of list) {
-      if (b.held) continue;
+      if (b.held || b.lockT > 0) continue; // held or just-placed: can't grab
       const dd = (b.x - x) * (b.x - x) + (b.z - z) * (b.z - z);
       if (dd < bd) { bd = dd; best = b; }
     }
@@ -170,7 +171,8 @@ export function nearestPickable(w, x, z) {
 
 // Build the 18-element sensor vector for one agent: opponent (3), own &
 // foe velocity (4), 8 rangefinder rays, then 3 carry/terrain inputs:
-// am-I-carrying, and the relative vector to the nearest pickable block.
+// am-I-carrying, and the relative vector to the nearest pickable block
+// (locked, just-placed blocks are excluded from "pickable").
 export function sense(w, who) {
   const me = who === "evader" ? w.evader : w.pursuer;
   const foe = who === "evader" ? w.pursuer : w.evader;
@@ -341,6 +343,7 @@ function doPlace(w, ag, foe) {
   b.x = Math.max(-lim, Math.min(lim, px));
   b.z = Math.max(-lim, Math.min(lim, pz));
   b.held = false;
+  b.lockT = CFG.PLACE_LOCK; // can't be re-grabbed for a moment
   ag.carry = null;
   return b;
 }
@@ -359,15 +362,20 @@ export function applyStep(w, evVx, evVz, puVx, puVz, evInteract, puInteract) {
   moveAgent(w.pursuer, w, w,
     puInteract ? w.pursuer.vx : puVx, puInteract ? w.pursuer.vz : puVz);
 
+  // Per-block placement lock ticks down: a freshly placed block simply
+  // can't be picked up again for a moment, which kills the place/re-grab
+  // spam without making building itself costly.
+  for (const b of w.blocks) if (b.lockT > 0) b.lockT--;
+  for (const b of w.userBlocks) if (b.lockT > 0) b.lockT--;
+
+  const interact = (ag, foe) => {
+    if (ag.carry) return doPlace(w, ag, foe);
+    doPickup(w, ag); // grabs nearest in-reach, unlocked block (if any)
+    return null;
+  };
   let evPlaced = null, puPlaced = null;
-  if (evInteract) {
-    evPlaced = w.evader.carry
-      ? doPlace(w, w.evader, w.pursuer) : (doPickup(w, w.evader), null);
-  }
-  if (puInteract) {
-    puPlaced = w.pursuer.carry
-      ? doPlace(w, w.pursuer, w.evader) : (doPickup(w, w.pursuer), null);
-  }
+  if (evInteract) evPlaced = interact(w.evader, w.pursuer);
+  if (puInteract) puPlaced = interact(w.pursuer, w.evader);
   // Held blocks ride above their carrier (kept sane for any readers).
   if (w.evader.carry) { w.evader.carry.x = w.evader.x; w.evader.carry.z = w.evader.z; }
   if (w.pursuer.carry) { w.pursuer.carry.x = w.pursuer.x; w.pursuer.carry.z = w.pursuer.z; }
