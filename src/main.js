@@ -14,9 +14,10 @@ import {
   serialize, deserialize, POP,
 } from "./sim/evolve.js";
 
-// Bumped to v4: a jerk penalty was added so smoothness is genuinely
-// learned; old saved brains are intentionally superseded by the new seed.
-const LS_KEY = "codepurple.v4";
+// Bumped to v5: co-evolution now uses a Hall of Fame (so brains stop
+// "forgetting" and circling), and the jerk penalty was trimmed. Old saved
+// brains are intentionally superseded by the new, more robust seed.
+const LS_KEY = "codepurple.v5";
 
 // ---- Load brains: saved progress > committed seed > random ----
 async function loadState() {

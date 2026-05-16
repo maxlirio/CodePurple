@@ -257,8 +257,9 @@ export function runEpisode(evaderGenome, pursuerGenome, rng = Math.random) {
   }
   const escaped = w.outcome === "escaped";
   const meanD = steps ? sumD / steps : CFG.A;
-  // Mean per-step steering change, scaled into a modest score penalty.
-  const SMOOTH = 35;
+  // Mean per-step steering change, scaled into a gentle score penalty.
+  // Kept light so it never competes with actually catching / escaping.
+  const SMOOTH = 12;
   const penE = steps > 1 ? (jerkE / (steps - 1)) * SMOOTH : 0;
   const penP = steps > 1 ? (jerkP / (steps - 1)) * SMOOTH : 0;
 
