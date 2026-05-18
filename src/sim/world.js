@@ -8,8 +8,8 @@ export const CFG = {
   A: 16,            // arena half-extent (32 x 32 floor)
   AGENT_R: 0.7,     // agent radius
   CATCH_R: 1.4,     // distance at which blue "catches" red
-  SPEED_E: 6.4,     // red (evader) top speed, units / second
-  SPEED_P: 7.2,     // blue (pursuer) is a touch faster, so skill matters
+  SPEED_E: 7.2,     // red (evader) — equal to blue
+  SPEED_P: 7.2,     // blue (pursuer)
   MAX_SPEED: 7.2,   // used only to normalise sensor inputs
   ACCEL: 22.0,      // how fast an agent reaches its desired velocity
   BLOCK_H: 1.1,     // pushable block half-size
@@ -19,7 +19,7 @@ export const CFG = {
   N_RAYS: 8,
   RAY_RANGE: 16,
   DT: 1 / 30,       // physics timestep
-  ESCAPE_T: 120,    // red survives 2 minutes -> red wins, restart
+  ESCAPE_T: 10,     // red survives 10 seconds -> red wins, restart
 };
 
 function rand(rng, a, b) { return a + (b - a) * rng(); }
